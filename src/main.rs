@@ -29,7 +29,11 @@ fn breadcrumbs_html(ancestors: &[Ancestor], file_name: &str) -> String {
         let Some(Ancestor { path, name }) = ancestors.next() else {
             break;
         };
-        previous_path += &format!("/{path}");
+        if previous_path == "/" {
+            previous_path = format!("/{path}");
+        } else {
+            previous_path += &format!("/{path}");
+        }
         if ancestors.len() == 0 {
             if file_name != "README.md" {
                 result.push(format!(r#"<a href="{previous_path}">{name}</a>"#));
