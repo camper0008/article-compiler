@@ -23,7 +23,7 @@ fn wrap_root(ancestors: &[Ancestor], content: &str, name: &str) -> String {
 
 fn breadcrumbs_html(ancestors: &[Ancestor], file_name: &str) -> String {
     let mut previous_path = String::new();
-    let mut ancestors = ancestors.into_iter();
+    let mut ancestors = ancestors.iter();
     let mut result = Vec::new();
     loop {
         let Some(Ancestor { path, name }) = ancestors.next() else {
@@ -35,11 +35,11 @@ fn breadcrumbs_html(ancestors: &[Ancestor], file_name: &str) -> String {
             previous_path += &format!("/{path}");
         }
         if ancestors.len() == 0 {
-            if file_name != "README.md" {
+            if file_name == "README.md" {
+                result.push(format!(r#"<span>{name}</span>"#));
+            } else {
                 result.push(format!(r#"<a href="{previous_path}">{name}</a>"#));
                 result.push(format!(r#"<span>{file_name}</span>"#));
-            } else {
-                result.push(format!(r#"<span>{name}</span>"#));
             }
         } else {
             result.push(format!(r#"<a href="{previous_path}">{name}</a>"#));
@@ -158,7 +158,7 @@ impl TryFrom<FileNode> for MarkdownNode {
                     ancestors.clone(),
                     vec![Ancestor {
                         name: file_name.clone(),
-                        path: if ancestors.len() == 0 {
+                        path: if ancestors.is_empty() {
                             String::new()
                         } else {
                             file_name.clone()
@@ -218,10 +218,10 @@ fn file_name(ancestors: &[Ancestor], name: &str) -> PathBuf {
     };
 
     let path: PathBuf = ancestors
-        .into_iter()
+        .iter()
         .chain(iter::once(&Ancestor {
             name: name.clone(),
-            path: name.clone(),
+            path: name,
         }))
         .skip(1)
         .map(|item| item.path.clone())
@@ -244,12 +244,10 @@ impl From<MarkdownNode> for HtmlNode {
             NodeContent::Directory((content, children)) => NodeContent::Directory((
                 wrap_root(
                     &node.ancestors,
-                    &content
-                        .as_ref()
-                        .map(|content| markdown::to_html(content))
-                        .unwrap_or_else(|| {
-                            wrap_directory(&node.file_name, &directory_list_html(&children))
-                        }),
+                    &content.as_ref().map_or_else(
+                        || wrap_directory(&node.file_name, &directory_list_html(&children)),
+                        |content| markdown::to_html(content),
+                    ),
                     &node.file_name,
                 ),
                 children.into_iter().map(Self::from).collect(),
@@ -267,7 +265,7 @@ fn write_node_to_dir(node: HtmlNode) -> Result<(), Box<dyn Error>> {
     match node.content {
         NodeContent::File(content) => {
             log::info!("  writing to {:?}", node.path);
-            fs::write(node.path, content)?
+            fs::write(node.path, content)?;
         }
         NodeContent::Directory((content, children)) => {
             let file_path = &node.path.join("index.html");
@@ -284,18 +282,18 @@ fn write_node_to_dir(node: HtmlNode) -> Result<(), Box<dyn Error>> {
 }
 
 fn copy_dir_entry<P: AsRef<Path> + Into<PathBuf> + Clone>(
-    entry: DirEntry,
+    entry: &DirEntry,
     to: P,
 ) -> Result<(), Box<dyn Error>> {
     let metadata = entry.metadata()?;
     let file_name = entry.file_name();
-    let to: PathBuf = to.clone().into();
-    let to = to.join(&file_name);
+    let to: PathBuf = to.into();
+    let to = to.join(file_name);
 
     if metadata.is_dir() {
         fs::create_dir(&to)?;
         fs::read_dir(entry.path())?
-            .map(|entry| copy_dir_entry(entry?, to.clone()))
+            .map(|entry| copy_dir_entry(&entry?, to.clone()))
             .collect::<Result<Vec<_>, _>>()?;
     } else {
         log::info!("  copying {:?} to {to:?}", entry.path());
@@ -318,7 +316,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let output_dir = output_dir();
     log::info!("cleaning {output_dir}/ directory");
     let _ = fs::remove_dir_all(&output_dir)
-        .or_else(|_| Err(log::info!("  {output_dir}/ directory already empty")));
+        .map_err(|_| log::info!("  {output_dir}/ directory already empty"));
 
     let root = FileNode {
         file_name: title,
@@ -333,7 +331,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     write_node_to_dir(root)?;
     log::info!("copying contents of public/ to {output_dir}/");
     fs::read_dir("public")?
-        .map(|entry| copy_dir_entry(entry?, &output_dir))
+        .map(|entry| copy_dir_entry(&entry?, &output_dir))
         .collect::<Result<Vec<_>, _>>()?;
     log::info!("done");
 
