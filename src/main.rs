@@ -1,9 +1,8 @@
 use itertools::Itertools;
 use simple_logger::SimpleLogger;
 
-const OUTPUT_DIR: &'static str = "build";
-
 use std::{
+    env,
     error::Error,
     fs::{self, DirEntry, ReadDir},
     iter,
@@ -145,7 +144,7 @@ impl TryFrom<FileNode> for MarkdownNode {
 
         match content {
             NodeContent::File(content) => {
-                log::info!("parsing file: \"{file_name}\"");
+                log::info!(r#"  parsing file: "{file_name}""#);
                 Ok(MarkdownNode {
                     content: NodeContent::File(content),
                     ancestors,
@@ -153,16 +152,16 @@ impl TryFrom<FileNode> for MarkdownNode {
                 })
             }
             NodeContent::Directory(entries) => {
-                log::info!("parsing dir:  \"{file_name}\"");
+                log::info!(r#"  parsing dir:  "{file_name}""#);
                 let readme_path = path.join("README.md");
                 let file_ancestors = Vec::from([
                     ancestors.clone(),
                     vec![Ancestor {
                         name: file_name.clone(),
-                        path: if file_name != "root" {
-                            file_name.clone()
-                        } else {
+                        path: if ancestors.len() == 0 {
                             String::new()
+                        } else {
+                            file_name.clone()
                         },
                     }],
                 ])
@@ -224,19 +223,14 @@ fn file_name(ancestors: &[Ancestor], name: &str) -> PathBuf {
             name: name.clone(),
             path: name.clone(),
         }))
-        .filter_map(|item| {
-            if item.name == "root" {
-                None
-            } else {
-                Some(item.path.clone())
-            }
-        })
+        .skip(1)
+        .map(|item| item.path.clone())
         .collect();
     path
 }
 
 fn file_path(ancestors: &[Ancestor], name: &str) -> PathBuf {
-    PathBuf::from("build").join(file_name(ancestors, name))
+    PathBuf::from(output_dir()).join(file_name(ancestors, name))
 }
 
 impl From<MarkdownNode> for HtmlNode {
@@ -270,12 +264,16 @@ impl From<MarkdownNode> for HtmlNode {
 }
 
 fn write_node_to_dir(node: HtmlNode) -> Result<(), Box<dyn Error>> {
-    log::info!("writing to {:?}", node.path);
     match node.content {
-        NodeContent::File(content) => fs::write(node.path, content)?,
+        NodeContent::File(content) => {
+            log::info!("  writing to {:?}", node.path);
+            fs::write(node.path, content)?
+        }
         NodeContent::Directory((content, children)) => {
+            let file_path = &node.path.join("index.html");
             fs::create_dir(&node.path)?;
-            fs::write(&node.path.join("index.html"), content)?;
+            fs::write(file_path, content)?;
+            log::info!("  writing to {:?}", file_path);
             for node in children {
                 write_node_to_dir(node)?;
             }
@@ -300,38 +298,43 @@ fn copy_dir_entry<P: AsRef<Path> + Into<PathBuf> + Clone>(
             .map(|entry| copy_dir_entry(entry?, to.clone()))
             .collect::<Result<Vec<_>, _>>()?;
     } else {
-        log::info!("copying {:?} to {to:?}", entry.path());
+        log::info!("  copying {:?} to {to:?}", entry.path());
         fs::copy(entry.path(), to)?;
     }
     Ok(())
 }
 
+fn root_dir_title() -> String {
+    env::var("ROOT_TITLE").unwrap_or_else(|_| String::from("root"))
+}
+
+fn output_dir() -> String {
+    env::var("OUT_DIR").unwrap_or_else(|_| String::from("build"))
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     SimpleLogger::new().env().init().unwrap();
-    log::info!("cleaning {OUTPUT_DIR}/ directory");
-    let _ = fs::remove_dir_all(OUTPUT_DIR)
-        .map_err(|_| log::info!("{OUTPUT_DIR}/ directory already empty"));
+    let title = root_dir_title();
+    let output_dir = output_dir();
+    log::info!("cleaning {output_dir}/ directory");
+    let _ = fs::remove_dir_all(&output_dir)
+        .or_else(|_| Err(log::info!("  {output_dir}/ directory already empty")));
 
     let root = FileNode {
-        file_name: "root".to_string(),
+        file_name: title,
         path: "articles".into(),
         content: NodeContent::Directory(fs::read_dir("articles")?),
         ancestors: Vec::new(),
     };
-    log::info!("");
     log::info!("parsing markdown");
     let root: MarkdownNode = root.try_into()?;
-    log::info!("");
     log::info!("compiling to html");
     let root: HtmlNode = root.try_into()?;
-    log::info!("");
     write_node_to_dir(root)?;
-    log::info!("");
-    log::info!("copying contents of public/ to {OUTPUT_DIR}/");
+    log::info!("copying contents of public/ to {output_dir}/");
     fs::read_dir("public")?
-        .map(|entry| copy_dir_entry(entry?, OUTPUT_DIR))
+        .map(|entry| copy_dir_entry(entry?, &output_dir))
         .collect::<Result<Vec<_>, _>>()?;
-    log::info!("");
     log::info!("done");
 
     Ok(())

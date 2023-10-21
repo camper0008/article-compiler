@@ -37,7 +37,9 @@ articles/
 
 ### customizing
 
-edit files in templates/ and public/ to customize
+edit files in templates/ and public/ to customize view
+
+configure out directory and root directory name with environment variables `OUT_DIR` and `ROOT_TITLE` respectively
 
 ### run
 
