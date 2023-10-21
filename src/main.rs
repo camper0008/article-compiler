@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use simple_logger::SimpleLogger;
 
 const OUTPUT_DIR: &'static str = "build";
@@ -191,25 +192,24 @@ impl TryFrom<FileNode> for MarkdownNode {
 }
 
 fn directory_list_html(nodes: &[MarkdownNode]) -> String {
-    format!(
-        "<ul>{}</ul>",
-        nodes
-            .iter()
-            .map(|node| {
-                let class = match node.content {
-                    NodeContent::Directory(_) => "directory-listing",
-                    NodeContent::File(_) => "file-listing",
-                };
-                format!(
-                    r#"<li class="{class}"><a href="/{}">{}</a></li>"#,
-                    file_name(&node.ancestors, &node.file_name)
-                        .to_str()
-                        .unwrap(),
-                    node.file_name
-                )
-            })
-            .fold(String::new(), |acc, curr| acc + &curr)
-    )
+    let content = nodes
+        .iter()
+        .sorted_by(|a, b| a.file_name.cmp(&b.file_name))
+        .map(|node| {
+            let class = match node.content {
+                NodeContent::Directory(_) => "directory-listing",
+                NodeContent::File(_) => "file-listing",
+            };
+            format!(
+                r#"<li class="{class}"><a href="/{}">{}</a></li>"#,
+                file_name(&node.ancestors, &node.file_name)
+                    .to_str()
+                    .unwrap(),
+                node.file_name
+            )
+        })
+        .fold(String::new(), |acc, curr| acc + &curr);
+    format!("<ul>{content}</ul>",)
 }
 
 fn file_name(ancestors: &[Ancestor], name: &str) -> PathBuf {
