@@ -2,11 +2,16 @@
     color-scheme: light dark;
 }
 
+@font-face {
+  font-family: "Cantarell";
+  src: url(/font/Cantarell.otf) format("truetype");
+}
+
 body {
     max-width: 1000px;
     margin-inline: auto;
     margin-top: 4em;
-    font-family: "System-UI", "Helvetica", "Arial", sans-serif;
+    font-family: "Cantarell", "Segoe UI", "Helvetica", "Arial", system-ui, sans-serif;
 }
 
 .directory-listing::marker {
