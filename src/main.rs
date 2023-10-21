@@ -196,8 +196,12 @@ fn directory_list_html(nodes: &[MarkdownNode]) -> String {
         nodes
             .iter()
             .map(|node| {
+                let class = match node.content {
+                    NodeContent::Directory(_) => "directory-listing",
+                    NodeContent::File(_) => "file-listing",
+                };
                 format!(
-                    r#"<li><a href="/{}">{}</a></li>"#,
+                    r#"<li class="{class}"><a href="/{}">{}</a></li>"#,
                     file_name(&node.ancestors, &node.file_name)
                         .to_str()
                         .unwrap(),

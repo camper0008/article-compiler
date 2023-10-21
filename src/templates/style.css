@@ -1,7 +1,24 @@
+:root {
+    color-scheme: light dark;
+}
+
 body {
     max-width: 1000px;
     margin-inline: auto;
     margin-top: 4em;
+    font-family: "System-UI", "Helvetica", "Arial", sans-serif;
+}
+
+.directory-listing::marker {
+    content: "📁 ";
+}
+
+.file-listing::marker {
+    content: "📄 ";
+}
+
+.directory-listing, .file-listing {
+    margin-bottom: 0.25em;
 }
 
 h1 {
