@@ -7,7 +7,7 @@ use std::{
     error::Error,
     fs::{self, DirEntry, ReadDir},
     iter,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 fn wrap_directory(name: &str, content: &str) -> String {
@@ -285,6 +285,27 @@ fn write_node_to_dir(node: HtmlNode) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn copy_dir_entry<P: AsRef<Path> + Into<PathBuf> + Clone>(
+    entry: DirEntry,
+    to: P,
+) -> Result<(), Box<dyn Error>> {
+    let metadata = entry.metadata()?;
+    let file_name = entry.file_name();
+    let to: PathBuf = to.clone().into();
+    let to = to.join(&file_name);
+
+    if metadata.is_dir() {
+        fs::create_dir(&to)?;
+        fs::read_dir(entry.path())?
+            .map(|entry| copy_dir_entry(entry?, to.clone()))
+            .collect::<Result<Vec<_>, _>>()?;
+    } else {
+        log::info!("copying {:?} to {to:?}", entry.path());
+        fs::copy(entry.path(), to)?;
+    }
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     SimpleLogger::new().env().init().unwrap();
     log::info!("cleaning {OUTPUT_DIR}/ directory");
@@ -305,10 +326,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let root: HtmlNode = root.try_into()?;
     log::info!("");
     write_node_to_dir(root)?;
-    fs::write(
-        format!("{OUTPUT_DIR}/style.css"),
-        include_bytes!("templates/style.css"),
-    )?;
+    log::info!("");
+    log::info!("copying contents of public/ to {OUTPUT_DIR}/");
+    fs::read_dir("public")?
+        .map(|entry| copy_dir_entry(entry?, OUTPUT_DIR))
+        .collect::<Result<Vec<_>, _>>()?;
+    log::info!("");
     log::info!("done");
 
     Ok(())

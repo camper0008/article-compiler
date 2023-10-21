@@ -5,11 +5,15 @@ article hosting for nerds
 
 ### writing articles
 
-edit files in articles/
+edit files in articles/ and /public
 
 if a directory looks like this:
 
 ```
+public/
+  style.css
+  javascript/
+    counter.js
 articles/
   category-0/
     README.md
@@ -33,7 +37,7 @@ articles/
 
 ### customizing
 
-edit files in templates/ to customize
+edit files in templates/ and public/ to customize
 
 ### run
 
@@ -48,6 +52,9 @@ build/
     some_file.html
   category-1/
     some_other_file.html
+  style.css
+  javascript/
+    counter.js
 ```
 ## demo
 
