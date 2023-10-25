@@ -41,6 +41,12 @@ edit files in templates/ and public/ to customize view
 
 configure out directory and root directory name with environment variables `OUT_DIR` and `ROOT_TITLE` respectively
 
+defaults:
+
+`OUT_DIR=build`
+
+`ROOT_TITLE=root`
+
 ### run
 
 `cargo run --release`
