@@ -11,6 +11,8 @@ body {
     max-width: 1000px;
     margin-inline: auto;
     margin-top: 4em;
+    padding-inline: 2rem;
+    
     font-family: "Cantarell", "Segoe UI", "Helvetica", "Arial", system-ui, sans-serif;
 }
 
