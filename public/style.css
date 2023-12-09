@@ -20,12 +20,25 @@ body {
     content: "📁 ";
 }
 
-.file-listing::marker {
+.text-file-listing::marker {
     content: "📄 ";
 }
 
-.directory-listing, .file-listing {
+.file-listing::marker {
+    content: "📦 ";
+}
+
+.text-file-listing, .directory-listing, .file-listing {
     margin-bottom: 0.25em;
+}
+
+footer {
+    text-align: center;
+}
+
+.text-file {
+    max-width: max-content;
+    margin-inline: auto;
 }
 
 h1 {
