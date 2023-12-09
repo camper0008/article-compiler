@@ -5,7 +5,7 @@ article hosting for nerds
 
 ### writing articles
 
-edit files in articles/ and /public
+edit files in content/ and /public
 
 if a directory looks like this:
 
@@ -14,7 +14,7 @@ public/
   style.css
   javascript/
     counter.js
-articles/
+content/
   category-0/
     README.md
     some_file.md
@@ -27,7 +27,7 @@ articles/
 subcategories are supported, i.e. 
 
 ```
-articles/
+content/
   category-0/
     category-1/
         category-2/

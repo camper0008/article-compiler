@@ -1,339 +1,211 @@
-use itertools::Itertools;
-use simple_logger::SimpleLogger;
+use std::env;
+use std::fs::{self, ReadDir};
+use std::path::PathBuf;
 
-use std::{
-    env,
-    error::Error,
-    fs::{self, DirEntry, ReadDir},
-    iter,
-    path::{Path, PathBuf},
-};
+use anyhow::Context;
 
-fn wrap_directory(name: &str, content: &str) -> String {
-    include_str!("templates/directory_list.html")
-        .replace("{{name}}", name)
-        .replace("{{content}}", content)
+enum Leaf<T> {
+    Dir(Vec<(String, Leaf<T>)>),
+    File(T),
 }
 
-fn wrap_root(ancestors: &[Ancestor], content: &str, name: &str) -> String {
-    include_str!("templates/root.html")
-        .replace("{{content}}", content)
-        .replace("{{breadcrumbs}}", &breadcrumbs_html(ancestors, name))
-}
+fn file_tree(file_name: String, dir: ReadDir) -> anyhow::Result<(String, Leaf<Vec<u8>>)> {
+    let entries = dir
+        .map(|entry| {
+            let entry = entry?;
+            let file_name = entry
+                .file_name()
+                .to_str()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "expected file {:?} to have valid utf-8 filename",
+                        entry.path()
+                    )
+                })?
+                .to_string();
 
-fn breadcrumbs_html(ancestors: &[Ancestor], file_name: &str) -> String {
-    let mut previous_path = String::new();
-    let mut ancestors = ancestors.iter();
-    let mut result = Vec::new();
-    loop {
-        let Some(Ancestor { path, name }) = ancestors.next() else {
-            break;
-        };
-        if previous_path == "/" {
-            previous_path = format!("/{path}");
-        } else {
-            previous_path += &format!("/{path}");
-        }
-        if ancestors.len() == 0 {
-            if file_name == "README.md" {
-                result.push(format!(r#"<span>{name}</span>"#));
+            let file_type = entry.file_type()?;
+            if file_type.is_dir() {
+                file_tree(file_name, fs::read_dir(entry.path())?)
             } else {
-                result.push(format!(r#"<a href="{previous_path}">{name}</a>"#));
-                result.push(format!(r#"<span>{file_name}</span>"#));
+                Ok((file_name, Leaf::File(fs::read(entry.path())?)))
             }
-        } else {
-            result.push(format!(r#"<a href="{previous_path}">{name}</a>"#));
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok((file_name, Leaf::Dir(entries)))
+}
+
+fn breadcrumbs_html(breadcrumbs: &Vec<String>) -> String {
+    let mut result = Vec::new();
+    let mut path = String::new();
+    let mut idx = 0;
+    loop {
+        if idx == 0 {
+            result.push(format!(r#"<a href="/">{}</a>"#, "root"));
+            idx += 1;
+            if idx == breadcrumbs.len() {
+                break;
+            } else {
+                continue;
+            }
         }
+        let name = &breadcrumbs[idx];
+        if breadcrumbs.len() - 1 == idx
+            || breadcrumbs.len() - 2 == idx && breadcrumbs[idx + 1].starts_with("README")
+        {
+            result.push(format!(r#"<span>{name}</span>"#));
+            break;
+        } else {
+            path += &format!("/{name}");
+            result.push(format!(r#"<a href="{path}">{name}</a>"#))
+        }
+        idx += 1;
     }
-    let result = result.join(" / ");
-    if result.is_empty() {
+    if result.len() == 1 {
         String::new()
     } else {
-        result
+        result.join(" / ")
     }
 }
 
-#[derive(Debug)]
-enum NodeContent<FileContent, DirectoryContent> {
-    Directory(DirectoryContent),
-    File(FileContent),
+fn is_text_file<T: AsRef<str>>(name: T) -> bool {
+    name.as_ref().ends_with(".txt") || name.as_ref().ends_with(".md")
 }
 
-#[derive(Debug)]
-struct MarkdownNode {
-    content: NodeContent<String, (Option<String>, Vec<MarkdownNode>)>,
-    file_name: String,
-    ancestors: Vec<Ancestor>,
-}
-
-#[derive(Debug)]
-struct HtmlNode {
-    path: PathBuf,
-    content: NodeContent<String, (String, Vec<HtmlNode>)>,
-}
-
-#[derive(Clone, Debug)]
-struct Ancestor {
+fn write_text_file(
+    mut path: PathBuf,
+    content: Vec<u8>,
+    formatted_breadcrumbs: String,
     name: String,
-    path: String,
-}
+) -> anyhow::Result<()> {
+    let template = include_str!("templates/root.html");
+    let template = template.replace("{{breadcrumbs}}", &formatted_breadcrumbs);
 
-struct FileNode {
-    file_name: String,
-    path: PathBuf,
-    content: NodeContent<String, ReadDir>,
-    ancestors: Vec<Ancestor>,
-}
-
-impl TryFrom<(Vec<Ancestor>, DirEntry)> for FileNode {
-    type Error = String;
-
-    fn try_from((ancestors, entry): (Vec<Ancestor>, DirEntry)) -> Result<Self, Self::Error> {
-        Ok(Self {
-            ancestors,
-            ..entry.try_into()?
-        })
-    }
-}
-
-impl TryFrom<DirEntry> for FileNode {
-    type Error = String;
-
-    fn try_from(value: DirEntry) -> Result<Self, Self::Error> {
-        let file_name = value
-            .file_name()
-            .into_string()
-            .unwrap_or_else(|file_name| format!("invalid UTF-8 filename: '{file_name:?}'"));
-
-        let path = value.path();
-
-        let metadata = value
-            .metadata()
-            .map_err(|err| format!("unable to read metadata for '{file_name}': {err}"))?;
-
-        let content = if metadata.is_dir() {
-            NodeContent::Directory(
-                fs::read_dir(path)
-                    .map_err(|err| format!("unable to read directory '{file_name}': {err}"))?,
-            )
-        } else {
-            NodeContent::File(
-                fs::read_to_string(path)
-                    .map_err(|err| format!("unable to read file '{file_name}': {err}"))?,
-            )
-        };
-        Ok(Self {
-            file_name,
-            path: value.path(),
-            content,
-            ancestors: Vec::new(),
-        })
-    }
-}
-
-impl TryFrom<FileNode> for MarkdownNode {
-    type Error = String;
-
-    fn try_from(value: FileNode) -> Result<Self, Self::Error> {
-        let FileNode {
-            path,
-            content,
-            file_name,
-            ancestors,
-        } = value;
-
-        match content {
-            NodeContent::File(content) => {
-                log::info!(r#"  parsing file: "{file_name}""#);
-                Ok(MarkdownNode {
-                    content: NodeContent::File(content),
-                    ancestors,
-                    file_name,
-                })
-            }
-            NodeContent::Directory(entries) => {
-                log::info!(r#"  parsing dir:  "{file_name}""#);
-                let readme_path = path.join("README.md");
-                let file_ancestors = Vec::from([
-                    ancestors.clone(),
-                    vec![Ancestor {
-                        name: file_name.clone(),
-                        path: if ancestors.is_empty() {
-                            String::new()
-                        } else {
-                            file_name.clone()
-                        },
-                    }],
-                ])
-                .concat();
-
-                let children = entries
-                    .map(|entry| {
-                        entry.map_err(|err| {
-                            format!("unable to get child in directory {file_name}: {err}")
-                        })
-                    })
-                    .map(|entry| entry.map(|v| (file_ancestors.clone(), v)))
-                    .map(|entry| entry.map(FileNode::try_from)?.map(Self::try_from)?)
-                    .collect::<Result<Vec<_>, _>>()?;
-
-                Ok(MarkdownNode {
-                    content: NodeContent::Directory((
-                        fs::read_to_string(readme_path).ok(),
-                        children,
-                    )),
-                    ancestors,
-                    file_name,
-                })
-            }
-        }
-    }
-}
-
-fn directory_list_html(nodes: &[MarkdownNode]) -> String {
-    let content = nodes
-        .iter()
-        .sorted_by(|a, b| a.file_name.cmp(&b.file_name))
-        .map(|node| {
-            let class = match node.content {
-                NodeContent::Directory(_) => "directory-listing",
-                NodeContent::File(_) => "file-listing",
-            };
-            format!(
-                r#"<li class="{class}"><a href="/{}">{}</a></li>"#,
-                file_name(&node.ancestors, &node.file_name)
-                    .to_str()
-                    .unwrap(),
-                node.file_name
-            )
-        })
-        .fold(String::new(), |acc, curr| acc + &curr);
-    format!("<ul>{content}</ul>",)
-}
-
-fn file_name(ancestors: &[Ancestor], name: &str) -> PathBuf {
-    let name = match name.strip_suffix("README.md") {
-        Some(name) => name.to_string() + "index.html",
-        None => name.replace(".md", ".html"),
-    };
-
-    let path: PathBuf = ancestors
-        .iter()
-        .chain(iter::once(&Ancestor {
-            name: name.clone(),
-            path: name,
-        }))
-        .skip(1)
-        .map(|item| item.path.clone())
-        .collect();
-    path
-}
-
-fn file_path(ancestors: &[Ancestor], name: &str) -> PathBuf {
-    PathBuf::from(output_dir()).join(file_name(ancestors, name))
-}
-
-impl From<MarkdownNode> for HtmlNode {
-    fn from(node: MarkdownNode) -> Self {
-        let content = match node.content {
-            NodeContent::File(content) => NodeContent::File(wrap_root(
-                &node.ancestors,
-                &markdown::to_html(&content),
-                &node.file_name,
-            )),
-            NodeContent::Directory((content, children)) => NodeContent::Directory((
-                wrap_root(
-                    &node.ancestors,
-                    &content.as_ref().map_or_else(
-                        || wrap_directory(&node.file_name, &directory_list_html(&children)),
-                        |content| markdown::to_html(content),
-                    ),
-                    &node.file_name,
-                ),
-                children.into_iter().map(Self::from).collect(),
-            )),
-        };
-
-        HtmlNode {
-            path: file_path(&node.ancestors, &node.file_name),
-            content,
-        }
-    }
-}
-
-fn write_node_to_dir(node: HtmlNode) -> Result<(), Box<dyn Error>> {
-    match node.content {
-        NodeContent::File(content) => {
-            log::info!("  writing to {:?}", node.path);
-            fs::write(node.path, content)?;
-        }
-        NodeContent::Directory((content, children)) => {
-            let file_path = &node.path.join("index.html");
-            fs::create_dir(&node.path)?;
-            fs::write(file_path, content)?;
-            log::info!("  writing to {:?}", file_path);
-            for node in children {
-                write_node_to_dir(node)?;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn copy_dir_entry<P: AsRef<Path> + Into<PathBuf> + Clone>(
-    entry: &DirEntry,
-    to: P,
-) -> Result<(), Box<dyn Error>> {
-    let metadata = entry.metadata()?;
-    let file_name = entry.file_name();
-    let to: PathBuf = to.into();
-    let to = to.join(file_name);
-
-    if metadata.is_dir() {
-        fs::create_dir(&to)?;
-        fs::read_dir(entry.path())?
-            .map(|entry| copy_dir_entry(&entry?, to.clone()))
-            .collect::<Result<Vec<_>, _>>()?;
+    let content = if name.ends_with(".md") {
+        let content = std::str::from_utf8(&content)
+            .with_context(|| format!("file '{name}' contains invalid utf-8"))?;
+        markdown::to_html(content)
     } else {
-        log::info!("  copying {:?} to {to:?}", entry.path());
-        fs::copy(entry.path(), to)?;
+        String::from_utf8(content)
+            .with_context(|| format!("file '{name}' contains invalid utf-8"))?
+    };
+
+    let template = template.replace("{{content}}", &content);
+    if path.file_stem().unwrap_or_else(|| std::ffi::OsStr::new("")) == "README" {
+        path.set_file_name("index.html");
+    } else {
+        path.set_extension("html");
+    };
+
+    fs::write(&path, template).with_context(|| format!("unable to write to {path:?}"))?;
+    Ok(())
+}
+
+fn write_dir_index(
+    path: PathBuf,
+    breadcrumbs: &Vec<String>,
+    name: String,
+    mut files: Vec<(String, Leaf<Vec<u8>>)>,
+) -> anyhow::Result<()> {
+    fs::create_dir(&path).with_context(|| format!("unable to create dir at {path:?}"))?;
+    files.sort_by_cached_key(|(name, _)| name.to_owned());
+    let files_html = files
+        .iter()
+        .map(|(name, leaf)| {
+            let mut path = breadcrumbs.clone();
+            path.remove(0);
+            if let Some(stem) = name
+                .strip_suffix(".md")
+                .or_else(|| name.strip_suffix(".txt"))
+            {
+                if stem == "README" {
+                    path.push("index.html".to_string())
+                } else {
+                    path.push(stem.to_string())
+                }
+            } else {
+                path.push(name.to_owned());
+            }
+            let path = path.join("/");
+            let class = match leaf {
+                Leaf::Dir(_) => "directory-listing",
+                Leaf::File(_) => "file-listing",
+            };
+            format!(r#"<li class="{class}"><a href="/{path}">{name}</a></li>"#)
+        })
+        .collect::<String>();
+    let template = include_str!("templates/directory_list.html");
+    let content = template
+        .replace("{{content}}", &files_html)
+        .replace("{{name}}", &name);
+
+    let content = include_str!("templates/root.html")
+        .replace("{{breadcrumbs}}", &breadcrumbs_html(breadcrumbs))
+        .replace("{{content}}", &content);
+    {
+        let mut path = path.clone();
+        path.push("index.html");
+        fs::write(path, content)?;
+    }
+    for leaf in files {
+        build_html(leaf, path.clone(), breadcrumbs.clone())?;
+    }
+
+    Ok(())
+}
+
+fn build_html(
+    leaf: (String, Leaf<Vec<u8>>),
+    mut path: PathBuf,
+    mut breadcrumbs: Vec<String>,
+) -> anyhow::Result<()> {
+    let (name, leaf) = leaf;
+    if breadcrumbs.len() > 0 {
+        path.push(&name);
+    }
+    breadcrumbs.push(name.clone());
+
+    match leaf {
+        Leaf::Dir(files) => write_dir_index(path, &breadcrumbs, name, files)?,
+        Leaf::File(content) => {
+            if is_text_file(&name) {
+                write_text_file(path, content, breadcrumbs_html(&breadcrumbs), name)?;
+            } else {
+                fs::write(&path, content).with_context(|| format!("unable to write to {path:?}"))?
+            }
+        }
     }
     Ok(())
 }
 
-fn root_dir_title() -> String {
-    env::var("ROOT_TITLE").unwrap_or_else(|_| String::from("root"))
+fn copy_dir(from: impl Into<PathBuf>, to: impl Into<PathBuf>) -> anyhow::Result<()> {
+    let from = from.into();
+    let to = to.into();
+    for file in fs::read_dir(&from)? {
+        let mut from = from.clone();
+        let mut to = to.clone();
+
+        let file = file?;
+        let file_name = file.file_name();
+        from.push(&file_name);
+        to.push(&file_name);
+        if file.file_type()?.is_dir() {
+            fs::create_dir(&to)?;
+            copy_dir(from, to)?;
+        } else {
+            fs::copy(from, to)?;
+        };
+    }
+    Ok(())
 }
 
-fn output_dir() -> String {
-    env::var("OUT_DIR").unwrap_or_else(|_| String::from("build"))
-}
-
-fn main() -> Result<(), Box<dyn Error>> {
-    SimpleLogger::new().env().init().unwrap();
-    let title = root_dir_title();
-    let output_dir = output_dir();
-    log::info!("cleaning {output_dir}/ directory");
-    let _ = fs::remove_dir_all(&output_dir)
-        .map_err(|_| log::info!("  {output_dir}/ directory already empty"));
-
-    let root = FileNode {
-        file_name: title,
-        path: "articles".into(),
-        content: NodeContent::Directory(fs::read_dir("articles")?),
-        ancestors: Vec::new(),
-    };
-    log::info!("parsing markdown");
-    let root: MarkdownNode = root.try_into()?;
-    log::info!("compiling to html");
-    let root: HtmlNode = root.try_into()?;
-    write_node_to_dir(root)?;
-    log::info!("copying contents of public/ to {output_dir}/");
-    fs::read_dir("public")?
-        .map(|entry| copy_dir_entry(&entry?, &output_dir))
-        .collect::<Result<Vec<_>, _>>()?;
-    log::info!("done");
-
+fn main() -> anyhow::Result<()> {
+    let build_dir = env::var("OUT_DIR").unwrap_or_else(|_| "build".into());
+    let _ = fs::remove_dir_all(&build_dir);
+    let root_name = env::var("ROOT_TITLE").unwrap_or_else(|_| "root".into());
+    let tree = file_tree(root_name, fs::read_dir("content")?)?;
+    build_html(tree, build_dir.clone().into(), Vec::new())?;
+    copy_dir("public", &build_dir)?;
     Ok(())
 }
