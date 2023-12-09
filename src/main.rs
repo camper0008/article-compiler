@@ -82,13 +82,12 @@ fn write_text_file(
     let template = include_str!("templates/root.html");
     let template = template.replace("{{breadcrumbs}}", &formatted_breadcrumbs);
 
+    let content = std::str::from_utf8(&content)
+        .with_context(|| format!("file '{name}' contains invalid utf-8"))?;
     let content = if name.ends_with(".md") {
-        let content = std::str::from_utf8(&content)
-            .with_context(|| format!("file '{name}' contains invalid utf-8"))?;
         markdown::to_html(content)
     } else {
-        String::from_utf8(content)
-            .with_context(|| format!("file '{name}' contains invalid utf-8"))?
+        format!(r#"<pre class="txt-file">{content}</pre>"#)
     };
 
     let template = template.replace("{{content}}", &content);
