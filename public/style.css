@@ -16,6 +16,10 @@ body {
     font-family: "Cantarell", "Segoe UI", "Helvetica", "Arial", system-ui, sans-serif;
 }
 
+pre {
+    white-space: pre-wrap;
+}
+
 .directory-listing::marker {
     content: "📁 ";
 }
